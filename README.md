@@ -11,6 +11,7 @@ Abstract: *Plug-and-play diffusion priors (PnPDP) have emerged as a promising re
 ![](assets/teaser.png)
 
 ## Table of Contents
+- [Architecture](#architecture)
 - [Environment requirements](#environment-requirements)
   - [UV](#uv)
   - [Docker](#docker)
@@ -18,9 +19,88 @@ Abstract: *Plug-and-play diffusion priors (PnPDP) have emerged as a promising re
 - [Data](#data)
 - [Inference](#inference)
 - [Hyperparameter search](#hyperparameter-search)
+- [Contributing](#contributing)
 - [License](#license)
 - [Citation](#citation)
 - [Troubleshooting](#troubleshooting)
+
+## Architecture
+
+InverseBench is built around four core abstractions that interact through a clean pipeline:
+
+```mermaid
+flowchart TB
+    subgraph Config ["Configuration Layer (Hydra YAML)"]
+        direction LR
+        PC["configs/problem/\n(forward model, data, evaluator)"]
+        AC["configs/algorithm/\n(solver parameters)"]
+        MC["configs/pretrain/\n(diffusion model weights)"]
+    end
+
+    subgraph Core ["Core Components"]
+        direction TB
+
+        subgraph FO ["Forward Operator (inverse_problems/)"]
+            direction TB
+            BO["BaseOperator\n- forward(x) → y\n- gradient(pred, obs)\n- loss(pred, obs)\n- normalize / unnormalize"]
+            FWI["acoustic.py\nFull Waveform\nInversion"]
+            NS["navier_stokes.py\n2D Navier-Stokes"]
+            IS["inverse_scatter.py\nOptical\nTomography"]
+            MRI["multi_coil_mri.py\nMulti-coil MRI"]
+            BH["blackhole.py\nBlack Hole\nImaging"]
+            BO --> FWI & NS & IS & MRI & BH
+        end
+
+        subgraph AL ["Algorithms (algo/)"]
+            direction TB
+            BA["Algo\n- inference(obs) → recon"]
+            DPS["DPS"]
+            DAPS["DAPS"]
+            DDNM["DDNM"]
+            EKI["EKI"]
+            MORE["... 10 more"]
+            BA --> DPS & DAPS & DDNM & EKI & MORE
+        end
+
+        subgraph DM ["Diffusion Model (models/)"]
+            direction TB
+            DDPM["DDPM + UNet\nLearned prior p(x)"]
+            SCHED["Scheduler\n(VP / VE / EDM\nnoise schedules)"]
+            DDPM --- SCHED
+        end
+
+        subgraph EV ["Evaluator (eval.py)"]
+            direction TB
+            EVB["Evaluator base\n- __call__(pred, target)\n- compute() → mean/std"]
+            EV1["AcousticWave\n(rel. L2, PSNR,\nSSIM, data misfit)"]
+            EV2["NavierStokes2d\n(relative L2)"]
+            EV3["InverseScatter\n(PSNR, SSIM)"]
+            EV4["MRI\n(DR-PSNR, DR-SSIM)"]
+            EV5["BlackHole\n(chi-sq, blur PSNR)"]
+            EVB --> EV1 & EV2 & EV3 & EV4 & EV5
+        end
+    end
+
+    subgraph Pipeline ["Inference Pipeline (main.py)"]
+        direction LR
+        D["Load Dataset"] --> OBS["y = A(x) + noise"]
+        OBS --> SOLVE["x̂ = algo.inference(y)"]
+        SOLVE --> EVAL["evaluator(x̂, x)"]
+        EVAL --> RES["Aggregate Metrics\n& Log to wandb"]
+    end
+
+    Config --> Core
+    FO -- "forward model A" --> AL
+    DM -- "diffusion prior" --> AL
+    AL -- "reconstructions" --> EV
+    Core --> Pipeline
+```
+
+**Key design principles:**
+
+- **Modularity** -- Each forward operator, algorithm, and evaluator is a self-contained class with a minimal interface. New components plug in by subclassing and adding a Hydra config.
+- **Config-driven** -- All experiments are defined by composable YAML configs via Hydra. Switching problems, algorithms, or models requires only changing config names on the command line.
+- **Problem-specific evaluation** -- Each scientific domain has its own evaluator with domain-appropriate metrics (e.g., chi-squared for black hole imaging, relative L2 for fluid dynamics).
 
 
 ## Environment requirements
@@ -129,6 +209,17 @@ To run hyperparameter sweeps using Wandb, follow these steps:
    You can add count flag to set the maximum number of runs to try. 
 
 5. You can start multiple agents to run the sweep in parallel by opening new terminals and running the same command `wandb agent [your-entity]/[your-project]/[sweep-id] --count 10`.
+
+## Contributing
+
+We welcome contributions from the community. You can contribute by:
+
+- **Adding a new inverse problem** -- Implement a `BaseOperator` subclass, dataset, evaluator, and Hydra config.
+- **Adding a new algorithm** -- Implement an `Algo` subclass and its config.
+- **Improving existing code** -- Bug fixes, performance improvements, or better documentation.
+- **Reporting issues** -- File bugs or feature requests via [GitHub Issues](https://github.com/devzhk/InverseBench/issues).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed instructions, code examples, and the full architecture guide.
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
